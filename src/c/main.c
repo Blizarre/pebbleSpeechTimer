@@ -2,18 +2,18 @@
 #include <time.h>
 
 static Window *s_window;
-static TextLayer *s_message_layer, *s_countdown_layer;
+static TextLayer *s_main_layer, *s_countdown_layer;
 static DictationSession *s_dictation_session;
 static AppTimer *s_timer_end_handle = NULL;
 static AppTimer *s_timer_countdown_handle = NULL;
-int waiting = 0;
+int number_minutes = 0;
 
-static char s_last_text[512];
-static char s_countdown_text[512];
+static char s_main_text[256];
+static char s_countdown_text[256];
 
-static void timer_callback(void* data) {
+static void timer_main_callback(void* data) {
   APP_LOG(APP_LOG_LEVEL_INFO, "Timer ended");
-  text_layer_set_text(s_message_layer, "Done");
+  text_layer_set_text(s_main_layer, "Done");
 
   if (s_timer_countdown_handle != NULL) {
     app_timer_cancel(s_timer_countdown_handle);
@@ -24,76 +24,75 @@ static void timer_callback(void* data) {
   vibes_double_pulse();
 }
 
-static void cancel_all() {
-  if (s_timer_end_handle != NULL) {
-    app_timer_cancel(s_timer_end_handle);
-    s_timer_end_handle = NULL;
-    text_layer_set_text(s_message_layer, "Canceled");
-  }
-  if (s_timer_countdown_handle != NULL) {
-    app_timer_cancel(s_timer_countdown_handle);
-    s_timer_countdown_handle = NULL;
-    text_layer_set_text(s_countdown_layer, "--");
-  }
-}
-
-static void countdown_callback(void* data) {
+static void timer_countdown_callback(void* data) {
   int* remaining = (int*)data;
   *remaining -= 1;
   if (*remaining > 0) {
-    s_timer_countdown_handle = app_timer_register(1000 * 60, countdown_callback, data);
+    s_timer_countdown_handle = app_timer_register(1000 * 60, timer_countdown_callback, data);
   }
   snprintf(s_countdown_text, sizeof(s_countdown_text), "%d minutes", *remaining);
   text_layer_set_text(s_countdown_layer, s_countdown_text);
 }
 
+static void stop_all_timers(char* main_text, char* countdown_text) {
+  if (s_timer_end_handle != NULL) {
+    app_timer_cancel(s_timer_end_handle);
+    s_timer_end_handle = NULL;
+  }
+  if (s_timer_countdown_handle != NULL) {
+    app_timer_cancel(s_timer_countdown_handle);
+    s_timer_countdown_handle = NULL;
+  }
+  if(main_text != NULL) {
+    text_layer_set_text(s_main_layer, main_text);
+  }
+  if (countdown_text != NULL) {
+    text_layer_set_text(s_countdown_layer, countdown_text);
+  }
+}
+
+static struct tm* get_time_in_future(int minutes_in_future) {
+    time_t now;
+    time(&now);
+    struct tm* tm_value = localtime(&now);
+    tm_value->tm_min += minutes_in_future;
+    time_t after = mktime(tm_value);
+    return localtime(&after);
+}
 
 static void dictation_session_callback(DictationSession *session, DictationSessionStatus status,
                                        char *transcription, void *context) {
-  // Reset the current timer if it was running
   if (status == DictationSessionStatusSuccess) {
-    cancel_all();
+    // Reset the current timers if they were running
+    stop_all_timers(NULL, NULL);
     APP_LOG(APP_LOG_LEVEL_INFO, "Transcribed '%s'", transcription);
-    waiting = atoi(transcription);
-    if (waiting == 0) {
+    number_minutes = atoi(transcription);
+    if (number_minutes == 0) {
       // Sometimes the speech-to-text write down the numbers as words so we try
       // the most common options
-      if (strcmp(transcription, "one") == 0) {
-        waiting = 1;
-      } else if (strcmp(transcription, "two") == 0) {
-        waiting = 2;
-      } else if (strcmp(transcription, "three") == 0) {
-        waiting = 3;
-      } else if (strcmp(transcription, "four") == 0) {
-        waiting = 4;
-      } else if (strcmp(transcription, "five") == 0) {
-        waiting = 3;
+      if (strcmp(transcription, "One.") == 0) {
+        number_minutes = 1;
+      } else if (strncmp(transcription, "Fight", 5) == 0) {
+        number_minutes = 5;
       }
     }
 
-    if (waiting != 0) {
-      time_t now;
-      time(&now);
-      struct tm* tm_value = localtime(&now);
-      tm_value->tm_min += waiting;
-      time_t after = mktime(tm_value);
-      strftime(s_last_text, sizeof(s_countdown_text), "Wait until %T", localtime(&after));
+    if (number_minutes != 0) {
+      strftime(s_main_text, sizeof(s_countdown_text), "Wait until %T", get_time_in_future(number_minutes));
+      snprintf(s_countdown_text, sizeof(s_main_text), "%d minutes", number_minutes);
 
-      //snprintf(s_last_text, sizeof(s_last_text), "Waiting %d minutes", waiting);
-      snprintf(s_countdown_text, sizeof(s_last_text), "%d minutes", waiting);
-
-      s_timer_end_handle = app_timer_register(waiting * 1000 * 60, timer_callback, &waiting);
-      s_timer_countdown_handle = app_timer_register(1000 * 60, countdown_callback, &waiting);
+      s_timer_end_handle = app_timer_register(number_minutes * 1000 * 60, timer_main_callback, &number_minutes);
+      s_timer_countdown_handle = app_timer_register(1000 * 60, timer_countdown_callback, &number_minutes);
     } else {
       APP_LOG(APP_LOG_LEVEL_ERROR, "Processed it as 0");
-      snprintf(s_last_text, sizeof(s_last_text), "Invalid: %s", transcription);
+      snprintf(s_main_text, sizeof(s_main_text), "Can't process:\n%s", transcription);
       vibes_long_pulse();
     }
   } else {
-    snprintf(s_last_text, sizeof(s_last_text), "Error %d", (int)status);
+    snprintf(s_main_text, sizeof(s_main_text), "Error %d", (int)status);
   }
   text_layer_set_text(s_countdown_layer, s_countdown_text);
-  text_layer_set_text(s_message_layer, s_last_text);
+  text_layer_set_text(s_main_layer, s_main_text);
 }
 
 static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -101,11 +100,11 @@ static void prv_select_click_handler(ClickRecognizerRef recognizer, void *contex
 }
 
 static void prv_up_click_handler(ClickRecognizerRef recognizer, void *context) {
-  text_layer_set_text(s_message_layer, "Up");
+  text_layer_set_text(s_main_layer, "Up");
 }
 
 static void prv_down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  cancel_all();
+  stop_all_timers("Cancelled", "--");
 }
 
 static void prv_click_config_provider(void *context) {
@@ -118,10 +117,10 @@ static void prv_window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
 
-  s_message_layer = text_layer_create(GRect(0, 72, bounds.size.w, 20));
-  text_layer_set_text(s_message_layer, "!!");
-  text_layer_set_text_alignment(s_message_layer, GTextAlignmentCenter);
-  layer_add_child(window_layer, text_layer_get_layer(s_message_layer));
+  s_main_layer = text_layer_create(GRect(0, 72, bounds.size.w, 40));
+  text_layer_set_text(s_main_layer, "!!");
+  text_layer_set_text_alignment(s_main_layer, GTextAlignmentCenter);
+  layer_add_child(window_layer, text_layer_get_layer(s_main_layer));
 
   s_countdown_layer = text_layer_create(GRect(0, 120, bounds.size.w, 20));
   text_layer_set_text(s_countdown_layer, "--");
@@ -129,14 +128,14 @@ static void prv_window_load(Window *window) {
   layer_add_child(window_layer, text_layer_get_layer(s_countdown_layer));
 
 
-  s_dictation_session = dictation_session_create(sizeof(s_last_text),
+  s_dictation_session = dictation_session_create(sizeof(s_main_text),
                                 dictation_session_callback, NULL);
   dictation_session_enable_confirmation(s_dictation_session, false);
   dictation_session_start(s_dictation_session);  
 }
 
 static void prv_window_unload(Window *window) {
-  text_layer_destroy(s_message_layer);
+  text_layer_destroy(s_main_layer);
   dictation_session_destroy(s_dictation_session);
 }
 

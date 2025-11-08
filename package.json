@@ -1,13 +1,13 @@
 {
-  "name": "myfirstproject",
-  "author": "MakeAwesomeHappen",
+  "name": "pebble_speech_timer",
+  "author": "Simon Marache-Francisco",
   "version": "1.0.0",
   "keywords": ["pebble-app"],
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "myfirstproject",
-    "uuid": "00000000-0000-0000-0000-000000000001",
+    "displayName": "Speech Timer",
+    "uuid": "3255a3fd-90a1-4fd0-a4b4-d5d227cf6f20",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
