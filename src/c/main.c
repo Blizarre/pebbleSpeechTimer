@@ -1,52 +1,20 @@
+#include "state.h"
 #include <pebble.h>
 #include <time.h>
 
 static Window *s_window;
 static TextLayer *s_main_layer, *s_countdown_layer;
 static DictationSession *s_dictation_session;
-static AppTimer *s_timer_end_handle = NULL;
-static AppTimer *s_timer_countdown_handle = NULL;
-static int timer_minutes_remaining = 0;
-static int timer_minutes = 0;
 
 static char s_main_text[256];
 static char s_countdown_text[256];
+static State state;
 
-static void timer_main_callback(void *data) {
-  APP_LOG(APP_LOG_LEVEL_INFO, "Timer ended");
-
-  if (s_timer_countdown_handle != NULL) {
-    app_timer_cancel(s_timer_countdown_handle);
-    s_timer_countdown_handle = NULL;
-  }
-
-  text_layer_set_text(s_main_layer, "Done");
-  text_layer_set_text(s_countdown_layer, "--");
-
-  vibes_double_pulse();
-}
-
-static void timer_countdown_callback(void *void_remaining_minutes) {
-  int *remaining_minutes = (int *)void_remaining_minutes;
-  *remaining_minutes -= 1;
-  if (*remaining_minutes > 0) {
-    s_timer_countdown_handle = app_timer_register(
-        1000 * 60, timer_countdown_callback, remaining_minutes);
-  }
-  snprintf(s_countdown_text, sizeof(s_countdown_text), "%d minutes",
-           *remaining_minutes);
-  text_layer_set_text(s_countdown_layer, s_countdown_text);
-}
+#define STATE_STORAGE_KEY 1
 
 static void stop_all_timers(char *main_text, char *countdown_text) {
-  if (s_timer_end_handle != NULL) {
-    app_timer_cancel(s_timer_end_handle);
-    s_timer_end_handle = NULL;
-  }
-  if (s_timer_countdown_handle != NULL) {
-    app_timer_cancel(s_timer_countdown_handle);
-    s_timer_countdown_handle = NULL;
-  }
+  stop(&state);
+  save(&state, STATE_STORAGE_KEY);
   if (main_text != NULL) {
     text_layer_set_text(s_main_layer, main_text);
   }
@@ -55,34 +23,37 @@ static void stop_all_timers(char *main_text, char *countdown_text) {
   }
 }
 
-static struct tm *get_time_in_future(int minutes_in_future) {
-  time_t now;
-  time(&now);
-  struct tm *tm_value = localtime(&now);
-  tm_value->tm_min += minutes_in_future;
-  time_t after = mktime(tm_value);
-  return localtime(&after);
+static void timer_countdown_callback(int remaining_minutes) {
+  time_t end_time = get_end_time(&state);
+  if (remaining_minutes > 0.0) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "Timer keep going for %d minutes",
+            remaining_minutes);
+    snprintf(s_countdown_text, sizeof(s_countdown_text), "%d minutes",
+             (int)remaining_minutes);
+    strftime(s_main_text, sizeof(s_main_text), "Wait until %T",
+             localtime(&end_time));
+  } else {
+    APP_LOG(APP_LOG_LEVEL_INFO, "Timer ended");
+    snprintf(s_countdown_text, sizeof(s_countdown_text), "--");
+    strftime(s_main_text, sizeof(s_main_text), "Timer ended at %T",
+             localtime(&end_time));
+
+    // TODO: Need to pulse more. Another 100ms callback to do it again?
+    vibes_double_pulse();
+  }
+  text_layer_set_text(s_countdown_layer, s_countdown_text);
+  text_layer_set_text(s_main_layer, s_main_text);
 }
 
 // Start a timer with minutes_in_future. Will Update the UI.
 // Restart the existing timer if minutes_in_future is 0
 static void start_timer(int minutes_in_future) {
-  if (minutes_in_future != 0) {
-    timer_minutes = minutes_in_future;
+  if (minutes_in_future == 0) {
+    minutes_in_future = get_number_of_minutes(&state);
   }
   stop_all_timers(NULL, NULL);
-  timer_minutes_remaining = timer_minutes;
-  strftime(s_main_text, sizeof(s_countdown_text), "Wait until %T",
-           get_time_in_future(timer_minutes));
-  snprintf(s_countdown_text, sizeof(s_main_text), "%d minutes", timer_minutes);
-
-  s_timer_end_handle = app_timer_register(timer_minutes * 1000 * 60,
-                                          timer_main_callback, &timer_minutes);
-  s_timer_countdown_handle = app_timer_register(
-      1000 * 60, timer_countdown_callback, &timer_minutes_remaining);
-
-  text_layer_set_text(s_countdown_layer, s_countdown_text);
-  text_layer_set_text(s_main_layer, s_main_text);
+  start(&state, minutes_in_future);
+  save(&state, STATE_STORAGE_KEY);
 }
 
 static void dictation_session_callback(DictationSession *session,
@@ -100,6 +71,10 @@ static void dictation_session_callback(DictationSession *session,
         minutes = 1;
       } else if (strncmp(transcription, "Fight", 5) == 0) {
         minutes = 5;
+      } else if (strncmp(transcription, "Fun.", 5) == 0) {
+        minutes = 5;
+      } else if (strncmp(transcription, "Dirty", 5) == 0) {
+        minutes = 30;
       }
     }
 
@@ -118,27 +93,29 @@ static void dictation_session_callback(DictationSession *session,
   }
 }
 
-static void prv_select_click_handler(ClickRecognizerRef recognizer,
-                                     void *context) {
+static void prv_select_click_handler(ClickRecognizerRef _recognizer,
+                                     void *_context) {
   dictation_session_start(s_dictation_session);
 }
 
-static void prv_up_click_handler(ClickRecognizerRef recognizer, void *context) {
+static void prv_up_click_handler(ClickRecognizerRef _recognizer,
+                                 void *_context) {
   start_timer(0);
 }
 
-static void prv_down_click_handler(ClickRecognizerRef recognizer,
-                                   void *context) {
+static void prv_down_click_handler(ClickRecognizerRef _recognizer,
+                                   void *_context) {
   stop_all_timers("Cancelled", "--");
 }
 
-static void prv_click_config_provider(void *context) {
+static void prv_click_config_provider(void *_context) {
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_click_handler);
   window_single_click_subscribe(BUTTON_ID_UP, prv_up_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, prv_down_click_handler);
 }
 
 static void prv_window_load(Window *window) {
+  APP_LOG(APP_LOG_LEVEL_INFO, "Window load");
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
 
@@ -155,10 +132,34 @@ static void prv_window_load(Window *window) {
   s_dictation_session = dictation_session_create(
       sizeof(s_main_text), dictation_session_callback, NULL);
   dictation_session_enable_confirmation(s_dictation_session, false);
-  dictation_session_start(s_dictation_session);
+
+  // Now we reload whatever was in storage or create a new empty state
+  load_or_new(&state, STATE_STORAGE_KEY, timer_countdown_callback);
+
+  // 2. There is a timer running, it has expired and the app has been waken up
+  if (launch_reason() == APP_LAUNCH_WAKEUP) {
+    // The only reason we would be awaken at that point is if the timer was done
+    timer_countdown_callback(0);
+
+    // 2. The user started the app themselved
+  } else if (launch_reason() == APP_LAUNCH_USER ||
+             launch_reason() == APP_LAUNCH_QUICK_LAUNCH) {
+    if (resume(&state)) {
+      APP_LOG(APP_LOG_LEVEL_INFO, "Resumed timer on startup");
+      return;
+    }
+    dictation_session_start(s_dictation_session);
+
+    // 3. We have been started by a system process (like after an install) and
+    // we need to show the help
+  } else {
+    text_layer_set_text(s_main_layer, "Press center button to start");
+    text_layer_set_text(s_countdown_layer, "--");
+  }
 }
 
-static void prv_window_unload(Window *window) {
+static void prv_window_unload(Window *_window) {
+  APP_LOG(APP_LOG_LEVEL_INFO, "Window unload");
   text_layer_destroy(s_main_layer);
   dictation_session_destroy(s_dictation_session);
 }
@@ -178,10 +179,8 @@ static void prv_deinit(void) { window_destroy(s_window); }
 
 int main(void) {
   prv_init();
-
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Done initializing, pushed window: %p",
-          s_window);
-
   app_event_loop();
+  APP_LOG(APP_LOG_LEVEL_INFO, "Event loop done");
   prv_deinit();
+  APP_LOG(APP_LOG_LEVEL_INFO, "De-Init done");
 }
