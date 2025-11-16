@@ -12,7 +12,7 @@ static State state;
 
 #define STATE_STORAGE_KEY 1
 
-static void stop_all_timers(char *main_text, char *countdown_text) {
+static void stop_timer(char *main_text, char *countdown_text) {
   stop(&state);
   save(&state, STATE_STORAGE_KEY);
   if (main_text != NULL) {
@@ -51,9 +51,39 @@ static void start_timer(int minutes_in_future) {
   if (minutes_in_future == 0) {
     minutes_in_future = get_number_of_minutes(&state);
   }
-  stop_all_timers(NULL, NULL);
+  stop_timer(NULL, NULL);
   start(&state, minutes_in_future);
   save(&state, STATE_STORAGE_KEY);
+}
+
+static void handle_dictation_response(DictationSessionStatus status) {
+  switch (status) {
+  case DictationSessionStatusSuccess:
+    // pass
+    return;
+  case DictationSessionStatusFailureTranscriptionRejected:
+  case DictationSessionStatusFailureTranscriptionRejectedWithError:
+    text_layer_set_text(s_countdown_layer, "Rejected by user");
+    break;
+  case DictationSessionStatusFailureSystemAborted:
+    text_layer_set_text(s_countdown_layer, "Too many errors");
+    break;
+  case DictationSessionStatusFailureNoSpeechDetected:
+    text_layer_set_text(s_countdown_layer, "No speech detected");
+    break;
+  case DictationSessionStatusFailureConnectivityError:
+    text_layer_set_text(s_countdown_layer, "Connectivity error");
+    break;
+  case DictationSessionStatusFailureDisabled:
+    text_layer_set_text(s_countdown_layer, "Transcription disabled");
+    break;
+  case DictationSessionStatusFailureInternalError:
+    text_layer_set_text(s_countdown_layer, "Internal error");
+    break;
+  case DictationSessionStatusFailureRecognizerError:
+    text_layer_set_text(s_countdown_layer, "Cloud failure");
+    break;
+  }
 }
 
 static void dictation_session_callback(DictationSession *session,
@@ -61,7 +91,7 @@ static void dictation_session_callback(DictationSession *session,
                                        char *transcription, void *context) {
   if (status == DictationSessionStatusSuccess) {
     // Reset the current timers if they were running
-    stop_all_timers(NULL, "--");
+    stop_timer(NULL, "--");
     APP_LOG(APP_LOG_LEVEL_INFO, "Transcribed '%s'", transcription);
     int minutes = atoi(transcription);
     if (minutes == 0) {
@@ -88,14 +118,13 @@ static void dictation_session_callback(DictationSession *session,
       text_layer_set_text(s_main_layer, s_main_text);
     }
   } else {
-    snprintf(s_main_text, sizeof(s_main_text), "Error %d", (int)status);
-    text_layer_set_text(s_main_layer, s_main_text);
+    handle_dictation_response(status);
   }
 }
 
 static void prv_select_click_handler(ClickRecognizerRef _recognizer,
                                      void *_context) {
-  dictation_session_start(s_dictation_session);
+  handle_dictation_response(dictation_session_start(s_dictation_session));
 }
 
 static void prv_up_click_handler(ClickRecognizerRef _recognizer,
@@ -105,7 +134,7 @@ static void prv_up_click_handler(ClickRecognizerRef _recognizer,
 
 static void prv_down_click_handler(ClickRecognizerRef _recognizer,
                                    void *_context) {
-  stop_all_timers("Cancelled", "--");
+  stop_timer("Cancelled", "--");
 }
 
 static void prv_click_config_provider(void *_context) {
@@ -120,7 +149,7 @@ static void prv_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
 
   s_main_layer = text_layer_create(GRect(0, 72, bounds.size.w, 40));
-  text_layer_set_text(s_main_layer, "!!");
+  text_layer_set_text(s_main_layer, "Press center button to start");
   text_layer_set_text_alignment(s_main_layer, GTextAlignmentCenter);
   layer_add_child(window_layer, text_layer_get_layer(s_main_layer));
 
@@ -138,8 +167,18 @@ static void prv_window_load(Window *window) {
 
   // 2. There is a timer running, it has expired and the app has been waken up
   if (launch_reason() == APP_LAUNCH_WAKEUP) {
-    // The only reason we would be awaken at that point is if the timer was done
-    timer_countdown_callback(0);
+    if (resume(&state)) {
+      // Maybe we have been awaken a little bit before the timer was supposed to
+      // end
+      APP_LOG(APP_LOG_LEVEL_INFO, "Resumed timer on startup");
+      return;
+    } else {
+      // The only reason we would be awaken at that point is if the timer was
+      // done And we were awaken a little bit after. So we fire the end of timer
+      // event
+      timer_countdown_callback(0);
+    }
+    return;
 
     // 2. The user started the app themselved
   } else if (launch_reason() == APP_LAUNCH_USER ||
@@ -148,14 +187,12 @@ static void prv_window_load(Window *window) {
       APP_LOG(APP_LOG_LEVEL_INFO, "Resumed timer on startup");
       return;
     }
-    dictation_session_start(s_dictation_session);
-
-    // 3. We have been started by a system process (like after an install) and
-    // we need to show the help
-  } else {
-    text_layer_set_text(s_main_layer, "Press center button to start");
-    text_layer_set_text(s_countdown_layer, "--");
+    handle_dictation_response(dictation_session_start(s_dictation_session));
+    return;
   }
+
+  // 3. We have been started by a system process (like after an install).
+  // In that case we just show the default values.
 }
 
 static void prv_window_unload(Window *_window) {

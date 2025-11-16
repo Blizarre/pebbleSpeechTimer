@@ -1,4 +1,5 @@
 #include "state.h"
+#include "pebble.h"
 
 void tick(State *state);
 
@@ -10,12 +11,12 @@ int get_number_of_minutes(State *state) {
 
 /// Will load the state if it exists. If not will create a new one
 void load_or_new(State *state, int32_t key, void (*callback_tick)(int)) {
-  int reset_state = 1;
+  bool reset_state = true;
   if (persist_exists(key)) {
     int result =
         persist_read_data(key, &state->serialized, sizeof(SerializedState));
     if (result == sizeof(SerializedState)) {
-      reset_state = 0;
+      reset_state = false;
     } else {
       APP_LOG(APP_LOG_LEVEL_ERROR, "Invalid state found with size: %d", result);
     }
@@ -68,14 +69,14 @@ void tick(State *state) {
 /// Try to resume from the state. Return 0 if no valid sessions were found
 /// Note: this will not resume if we were just awaken a few ms after the end
 /// of the timer.
-int resume(State *state) {
+bool resume(State *state) {
   if (state->serialized.end_time < time(NULL)) {
     // The timer in the state ended in the past, there is nothing for us to do
-    return 0;
+    return false;
   }
   // We schedule the tick as the next thing to run, it will recover from there
   state->timer_handle = app_timer_register(1, tick_void, state);
-  return 1;
+  return true;
 }
 
 void stop(State *state) {
@@ -102,6 +103,15 @@ void start(State *state, int number_of_minutes) {
   time_t end_time = get_time_in_future(number_of_minutes);
   state->serialized.timer_number_of_minutes = number_of_minutes;
   state->serialized.end_time = end_time;
-  state->serialized.wakeup_id = wakeup_schedule(end_time, 0, false);
+  WakeupId wakeup_id;
+  do {
+    wakeup_id = wakeup_schedule(end_time, 0, false);
+    if (wakeup_id == E_RANGE) {
+      APP_LOG(APP_LOG_LEVEL_ERROR,
+              "wakeup inavailable at that time, will try 1 minute earlier");
+      end_time -= 60;
+    }
+  } while (wakeup_id == E_RANGE);
+  state->serialized.wakeup_id = wakeup_id;
   state->timer_handle = app_timer_register(1, tick_void, state);
 }

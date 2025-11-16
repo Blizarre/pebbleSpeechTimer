@@ -1,6 +1,7 @@
 #pragma once
 
 #include <pebble.h>
+#include <stdbool.h>
 #include <time.h>
 
 typedef struct _serialized_state {
@@ -22,7 +23,7 @@ void load_or_new(State *state, int32_t key, void (*callback_tick)(int));
 
 int save(State *state, int32_t key);
 
-int resume(State *state);
+bool resume(State *state);
 
 void start(State *state, int number_of_minutes);
 
