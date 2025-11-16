@@ -1,16 +1,19 @@
-#include "state.h"
+#include "timer.h"
 #include "pebble.h"
 
-void tick(State *state);
+static void tick(TimerState *state);
 
-time_t get_end_time(State *state) { return state->serialized.end_time; }
+time_t timer_get_end_time(TimerState *state) {
+  return state->serialized.end_time;
+}
 
-int get_number_of_minutes(State *state) {
+int timer_get_number_of_minutes(TimerState *state) {
   return state->serialized.timer_number_of_minutes;
 }
 
 /// Will load the state if it exists. If not will create a new one
-void load_or_new(State *state, int32_t key, void (*callback_tick)(int)) {
+void timer_load_or_new(TimerState *state, int32_t key,
+                       void (*callback_tick)(int)) {
   bool reset_state = true;
   if (persist_exists(key)) {
     int result =
@@ -34,7 +37,7 @@ void load_or_new(State *state, int32_t key, void (*callback_tick)(int)) {
   state->timer_handle = NULL;
 }
 
-int save(State *state, int32_t key) {
+int timer_save(TimerState *state, int32_t key) {
   int result =
       persist_write_data(key, &state->serialized, sizeof(SerializedState));
   if (result < 0) {
@@ -44,9 +47,9 @@ int save(State *state, int32_t key) {
 }
 
 /// This is just a wrapper for the real tick with a proper type
-void tick_void(void *data) { tick((State *)data); }
+static void tick_void(void *data) { tick((TimerState *)data); }
 
-void tick(State *state) {
+static void tick(TimerState *state) {
   float diff = difftime(state->serialized.end_time, time(NULL));
 
   state->callback_tick((int)(diff / 60));
@@ -69,7 +72,7 @@ void tick(State *state) {
 /// Try to resume from the state. Return 0 if no valid sessions were found
 /// Note: this will not resume if we were just awaken a few ms after the end
 /// of the timer.
-bool resume(State *state) {
+bool timer_resume(TimerState *state) {
   if (state->serialized.end_time < time(NULL)) {
     // The timer in the state ended in the past, there is nothing for us to do
     return false;
@@ -79,7 +82,7 @@ bool resume(State *state) {
   return true;
 }
 
-void stop(State *state) {
+void timer_stop(TimerState *state) {
   if (state->timer_handle != NULL) {
     app_timer_cancel(state->timer_handle);
   }
@@ -99,7 +102,7 @@ static time_t get_time_in_future(int minutes_in_future) {
   return mktime(tm_value);
 }
 
-void start(State *state, int number_of_minutes) {
+void timer_start(TimerState *state, int number_of_minutes) {
   time_t end_time = get_time_in_future(number_of_minutes);
   state->serialized.timer_number_of_minutes = number_of_minutes;
   state->serialized.end_time = end_time;

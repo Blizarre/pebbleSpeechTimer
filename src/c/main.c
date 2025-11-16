@@ -1,4 +1,4 @@
-#include "state.h"
+#include "timer.h"
 #include <pebble.h>
 #include <time.h>
 
@@ -8,13 +8,13 @@ static DictationSession *s_dictation_session;
 
 static char s_main_text[256];
 static char s_countdown_text[256];
-static State state;
+static TimerState state;
 
 #define STATE_STORAGE_KEY 1
 
 static void stop_timer(char *main_text, char *countdown_text) {
-  stop(&state);
-  save(&state, STATE_STORAGE_KEY);
+  timer_stop(&state);
+  timer_save(&state, STATE_STORAGE_KEY);
   if (main_text != NULL) {
     text_layer_set_text(s_main_layer, main_text);
   }
@@ -24,7 +24,7 @@ static void stop_timer(char *main_text, char *countdown_text) {
 }
 
 static void timer_countdown_callback(int remaining_minutes) {
-  time_t end_time = get_end_time(&state);
+  time_t end_time = timer_get_end_time(&state);
   if (remaining_minutes > 0.0) {
     APP_LOG(APP_LOG_LEVEL_INFO, "Timer keep going for %d minutes",
             remaining_minutes);
@@ -49,11 +49,11 @@ static void timer_countdown_callback(int remaining_minutes) {
 // Restart the existing timer if minutes_in_future is 0
 static void start_timer(int minutes_in_future) {
   if (minutes_in_future == 0) {
-    minutes_in_future = get_number_of_minutes(&state);
+    minutes_in_future = timer_get_number_of_minutes(&state);
   }
   stop_timer(NULL, NULL);
-  start(&state, minutes_in_future);
-  save(&state, STATE_STORAGE_KEY);
+  timer_start(&state, minutes_in_future);
+  timer_save(&state, STATE_STORAGE_KEY);
 }
 
 static void handle_dictation_response(DictationSessionStatus status) {
@@ -163,11 +163,11 @@ static void prv_window_load(Window *window) {
   dictation_session_enable_confirmation(s_dictation_session, false);
 
   // Now we reload whatever was in storage or create a new empty state
-  load_or_new(&state, STATE_STORAGE_KEY, timer_countdown_callback);
+  timer_load_or_new(&state, STATE_STORAGE_KEY, timer_countdown_callback);
 
   // 2. There is a timer running, it has expired and the app has been waken up
   if (launch_reason() == APP_LAUNCH_WAKEUP) {
-    if (resume(&state)) {
+    if (timer_resume(&state)) {
       // Maybe we have been awaken a little bit before the timer was supposed to
       // end
       APP_LOG(APP_LOG_LEVEL_INFO, "Resumed timer on startup");
@@ -183,7 +183,7 @@ static void prv_window_load(Window *window) {
     // 2. The user started the app themselved
   } else if (launch_reason() == APP_LAUNCH_USER ||
              launch_reason() == APP_LAUNCH_QUICK_LAUNCH) {
-    if (resume(&state)) {
+    if (timer_resume(&state)) {
       APP_LOG(APP_LOG_LEVEL_INFO, "Resumed timer on startup");
       return;
     }
