@@ -2,7 +2,6 @@
 
 #include <pebble.h>
 #include <stdbool.h>
-#include <time.h>
 
 typedef struct _serialized_state {
   time_t timer_number_of_minutes;

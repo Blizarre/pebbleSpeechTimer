@@ -1,4 +1,6 @@
 -I/home/simon/.pebble-sdk/SDKs/4.9.77/sdk-core/pebble/emery/include
+-Ibuild/include
+-Ibuild/flint
 -Wall
 -Wextra
 -DRELEASE

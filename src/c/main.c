@@ -12,6 +12,13 @@ static TimerState state;
 
 #define STATE_STORAGE_KEY 1
 
+// Custom vibration pattern to use when the timer ends
+static const uint32_t vibe_segments[] = {200, 100, 400, 200, 400, 100, 200};
+VibePattern vibe_pattern = {
+    .durations = vibe_segments,
+    .num_segments = ARRAY_LENGTH(vibe_segments),
+};
+
 static void stop_timer(char *main_text, char *countdown_text) {
   timer_stop(&state);
   timer_save(&state, STATE_STORAGE_KEY);
@@ -39,7 +46,7 @@ static void timer_countdown_callback(int remaining_minutes) {
              localtime(&end_time));
 
     // TODO: Need to pulse more. Another 100ms callback to do it again?
-    vibes_double_pulse();
+    vibes_enqueue_custom_pattern(vibe_pattern);
   }
   text_layer_set_text(s_countdown_layer, s_countdown_text);
   text_layer_set_text(s_main_layer, s_main_text);
